@@ -1,0 +1,63 @@
+name: Terraform Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  terraform-validate:
+    name: Terraform Format and Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.0"
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        continue-on-error: false
+
+      - name: Validate Staging Environment
+        run: |
+          cd envs/staging
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate Production Environment
+        run: |
+          cd envs/production
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate RDS PostgreSQL Module
+        run: |
+          cd modules/rds-postgres
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate S3 Bucket Module
+        run: |
+          cd modules/s3-bucket
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate ElastiCache Redis Module
+        run: |
+          cd modules/elasticache-redis
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate SQS Queue Module
+        run: |
+          cd modules/sqs-queue
+          terraform init -backend=false
+          terraform validate
