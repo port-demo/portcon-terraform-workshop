@@ -1,0 +1,12 @@
+# CODEOWNERS for PortCon SF 2026 Workshop
+# 
+# Note: These GitHub teams may not exist yet in the demo organization.
+# In a real deployment, ensure these teams are created with appropriate members.
+
+# Data Platform team owns database and cache modules
+/modules/rds-postgres/       @port-demo/data-platform
+/modules/elasticache-redis/  @port-demo/data-platform
+
+# Cloud Platform team owns storage and messaging modules
+/modules/s3-bucket/          @port-demo/cloud-platform
+/modules/sqs-queue/          @port-demo/cloud-platform
