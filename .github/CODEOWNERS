@@ -10,3 +10,4 @@
 # Cloud Platform team owns storage and messaging modules
 /modules/s3-bucket/          @port-demo/cloud-platform
 /modules/sqs-queue/          @port-demo/cloud-platform
+/modules/kafka-topic/        @port-demo/cloud-platform
