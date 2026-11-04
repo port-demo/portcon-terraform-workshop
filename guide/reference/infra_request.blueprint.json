@@ -1,0 +1,199 @@
+{
+  "identifier": "infra_request",
+  "title": "Infra Request",
+  "icon": "Terraform",
+  "schema": {
+    "properties": {
+      "request_text": {
+        "title": "Request",
+        "description": "The developer's original plain-language infrastructure request.",
+        "type": "string"
+      },
+      "requester": {
+        "title": "Requester",
+        "description": "Port user who submitted the request.",
+        "type": "string",
+        "format": "user"
+      },
+      "clarification_questions": {
+        "title": "Clarification Questions",
+        "description": "Questions asked back to the requester when details were missing.",
+        "type": "string",
+        "format": "markdown"
+      },
+      "clarification_answers": {
+        "title": "Clarification Answers",
+        "description": "The requester's answers to the clarification questions.",
+        "type": "string",
+        "format": "markdown"
+      },
+      "tech_plan": {
+        "title": "Tech Plan",
+        "description": "Technical plan produced by the platform skills: module, inputs, environment and rationale.",
+        "type": "string",
+        "format": "markdown"
+      },
+      "policy_check": {
+        "title": "Policy Check",
+        "description": "Result of checking the plan against platform policy.",
+        "type": "string",
+        "enum": [
+          "pass",
+          "fail",
+          "not_run"
+        ],
+        "enumColors": {
+          "pass": "green",
+          "fail": "red",
+          "not_run": "lightGray"
+        }
+      },
+      "policy_check_details": {
+        "title": "Policy Check Details",
+        "description": "Which policies were checked and why the check passed or failed.",
+        "type": "string",
+        "format": "markdown"
+      },
+      "status": {
+        "title": "Status",
+        "description": "Lifecycle stage of the request. manual_platform = no catalog module fits and the platform team took it to build by hand.",
+        "type": "string",
+        "enum": [
+          "needs_info",
+          "planned",
+          "awaiting_approval",
+          "approved",
+          "rejected",
+          "pr_opening",
+          "pr_opened",
+          "pr_failed",
+          "manual_platform"
+        ],
+        "enumColors": {
+          "needs_info": "yellow",
+          "planned": "paleBlue",
+          "awaiting_approval": "orange",
+          "approved": "green",
+          "rejected": "red",
+          "pr_opened": "purple",
+          "pr_opening": "blue",
+          "pr_failed": "red",
+          "manual_platform": "turquoise"
+        }
+      },
+      "approver": {
+        "title": "Approver",
+        "description": "Port user who approved or rejected the request.",
+        "type": "string",
+        "format": "user"
+      },
+      "decision_reason": {
+        "title": "Decision Reason",
+        "description": "Why the approver approved or rejected the request.",
+        "type": "string"
+      },
+      "pr_url": {
+        "title": "Pull Request",
+        "description": "Link to the Terraform pull request opened for this request.",
+        "type": "string",
+        "format": "url"
+      },
+      "approval_mode": {
+        "title": "Approval mode",
+        "description": "auto = approved by the rules, human = approved by the module owner, exception = guardrail violation approved as an exception by a manager.",
+        "type": "string",
+        "enum": [
+          "auto",
+          "human",
+          "exception"
+        ],
+        "enumColors": {
+          "auto": "green",
+          "human": "purple",
+          "exception": "orange"
+        }
+      },
+      "data_sensitivity": {
+        "title": "Data sensitivity",
+        "description": "Sensitivity of the data the requested resource will hold.",
+        "type": "string",
+        "enum": [
+          "public",
+          "internal",
+          "confidential"
+        ],
+        "enumColors": {
+          "public": "green",
+          "internal": "yellow",
+          "confidential": "red"
+        }
+      },
+      "approval_reason": {
+        "title": "Approval reason",
+        "description": "Why the request needs a person: production, confidential data, module requires approval, guardrail exception. Empty = auto-approved.",
+        "type": "array"
+      },
+      "pr_requested_at": {
+        "title": "PR requested at",
+        "description": "When the workflow started the Cursor PR step (used to spot stuck PRs).",
+        "type": "string",
+        "format": "date-time"
+      },
+      "pr_deadline": {
+        "title": "PR deadline",
+        "description": "Timer set to 30 minutes after the PR step starts. If it expires while the request is still pr_opening, an automation marks it pr_failed (stuck).",
+        "type": "string",
+        "format": "timer"
+      }
+    },
+    "required": []
+  },
+  "mirrorProperties": {
+    "service_team": {
+      "title": "Service Team",
+      "path": "service.$team"
+    },
+    "module_owning_team": {
+      "title": "Module Owning Team",
+      "path": "terraform_module.owning_team.$title"
+    }
+  },
+  "calculationProperties": {
+    "days_waiting": {
+      "title": "Days waiting",
+      "description": "Days since the request last changed status.",
+      "calculation": "((now - (.updatedAt | sub(\"\\\\.[0-9]+Z$\"; \"Z\") | fromdateiso8601)) / 86400 * 10 | floor) / 10",
+      "type": "number"
+    },
+    "waiting_on": {
+      "title": "Waiting on",
+      "description": "Who or what the request is waiting on right now, derived from status and approval_reason.",
+      "calculation": "if .properties.status == \"awaiting_approval\" then (if ((.properties.approval_reason // []) | index(\"guardrail exception\")) != null then (if (.relations.terraform_module // null) == null then \"Platform team decision (no module fits)\" else \"Exception approval (any Port user)\" end) else \"Module owning team approval\" end) elif .properties.status == \"manual_platform\" then \"Platform team: building it manually\" elif .properties.status == \"pr_opening\" then \"Coding agent is opening the PR\" elif .properties.status == \"pr_failed\" then \"Platform team: Retry PR\" elif .properties.status == \"pr_opened\" then \"PR review and merge\" elif .properties.status == \"rejected\" then \"You: fix and resubmit\" elif .properties.status == \"planned\" then \"AI planner\" elif .properties.status == \"approved\" then \"PR step starting\" else (.properties.status // \"unknown\") end",
+      "type": "string"
+    }
+  },
+  "aggregationProperties": {},
+  "relations": {
+    "service": {
+      "title": "Service",
+      "description": "Service the infrastructure is for.",
+      "target": "service",
+      "required": false,
+      "many": false
+    },
+    "environment": {
+      "title": "Environment",
+      "description": "Target environment.",
+      "target": "environment",
+      "required": false,
+      "many": false
+    },
+    "terraform_module": {
+      "title": "Terraform Module",
+      "description": "Module the tech plan uses.",
+      "target": "terraform_module",
+      "required": false,
+      "many": false
+    }
+  }
+}

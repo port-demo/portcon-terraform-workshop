@@ -1,0 +1,119 @@
+{
+  "identifier": "terraform_module",
+  "title": "Terraform Module",
+  "icon": "Terraform",
+  "schema": {
+    "properties": {
+      "description": {
+        "title": "Description",
+        "description": "What the module provisions and when to use it.",
+        "type": "string",
+        "format": "markdown"
+      },
+      "provider": {
+        "title": "Cloud Provider",
+        "description": "Cloud provider the module targets.",
+        "type": "string",
+        "enum": [
+          "aws",
+          "gcp",
+          "azure"
+        ],
+        "enumColors": {
+          "aws": "orange",
+          "gcp": "blue",
+          "azure": "turquoise"
+        }
+      },
+      "inputs": {
+        "title": "Inputs",
+        "description": "Module input variables. Each item: {name, type, default, description}.",
+        "type": "array"
+      },
+      "repo_path": {
+        "title": "Repo Path",
+        "description": "Path of the module in the public workshop repo, e.g. modules/aws/rds-postgres.",
+        "type": "string"
+      },
+      "allowed_in_production": {
+        "title": "Allowed in Production",
+        "description": "Whether this module may be used in the production environment.",
+        "type": "boolean"
+      },
+      "requires_second_approver": {
+        "title": "Requires Second Approver (deprecated)",
+        "description": "Deprecated - not used by the workflow. Use 'Needs approval' (requires_approval) instead.",
+        "type": "boolean"
+      },
+      "cost_tier": {
+        "title": "Cost Tier",
+        "description": "Rough cost tier of resources created by this module.",
+        "type": "string",
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "enumColors": {
+          "low": "green",
+          "medium": "yellow",
+          "high": "red"
+        }
+      },
+      "requires_approval": {
+        "title": "Needs approval",
+        "description": "If true, every request using this module needs a human approval from the owning team, regardless of environment.",
+        "type": "boolean"
+      }
+    },
+    "required": []
+  },
+  "mirrorProperties": {
+    "owning_team_size": {
+      "title": "Owning team members",
+      "path": "owning_team.size"
+    }
+  },
+  "calculationProperties": {
+    "inputs_summary": {
+      "title": "Inputs Summary",
+      "description": "Readable list of the module inputs (generated from the Inputs array).",
+      "calculation": "(.properties.inputs // []) | map(\"- `\" + .name + \"` (\" + (.type // \"any\") + (if has(\"default\") then \", default `\" + (.default | tostring) + \"`\" else \", required\" end) + \"): \" + (.description // \"\")) | join(\"\\n\")",
+      "type": "string",
+      "format": "markdown"
+    }
+  },
+  "aggregationProperties": {
+    "requests_30d": {
+      "title": "Requests (30d)",
+      "type": "number",
+      "description": "Infra requests that used this module in the last 30 days.",
+      "target": "infra_request",
+      "query": {
+        "combinator": "and",
+        "rules": [
+          {
+            "property": "$createdAt",
+            "operator": "between",
+            "value": {
+              "preset": "lastMonth"
+            }
+          }
+        ]
+      },
+      "calculationSpec": {
+        "calculationBy": "entities",
+        "func": "count"
+      }
+    }
+  },
+  "relations": {
+    "owning_team": {
+      "title": "Owning Team",
+      "description": "Platform team that owns and maintains the module.",
+      "target": "_team",
+      "required": false,
+      "many": false
+    }
+  }
+}

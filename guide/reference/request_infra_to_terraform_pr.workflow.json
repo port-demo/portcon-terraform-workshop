@@ -1,0 +1,1118 @@
+{
+  "identifier": "request_infra_to_terraform_pr",
+  "title": "Request Infra \u2192 Terraform PR",
+  "icon": "Terraform",
+  "description": "Request cloud infrastructure in plain language and get a governed Terraform pull request. Use this when a developer asks for a database, bucket, cache, queue or other cloud resource for a service. Inputs: request_text (the user's own words), service (service entity), environment (staging/test/production entity), data_sensitivity (public/internal/confidential), optional module, notes and resubmit_of (a rejected request to prefill from). Also runs from a module row (module preselected) or a rejected request row (resubmit). The workflow logs an Infra Request, an AI planner picks a catalog Terraform module and drafts a tech plan (keeping the requested values), an independent AI checks guardrails. Guardrail failures go to Exception Approval (any Port user, reason required). Passing plans auto-approve or ask the module's owning team (production, confidential data, or modules that require approval). Finally a coding agent opens the PR (30-minute timer) and the PR link is saved on the request.",
+  "category": "Infra self-service",
+  "allowAnyoneToViewRuns": true,
+  "nodes": [
+    {
+      "identifier": "trigger",
+      "title": "Request Infra",
+      "icon": "Terraform",
+      "description": null,
+      "config": {
+        "type": "SELF_SERVE_TRIGGER",
+        "userInputs": {
+          "properties": {
+            "notes": {
+              "title": "Notes",
+              "description": "Optional extra context for the platform team (deadlines, constraints, links).",
+              "dependsOn": [
+                "resubmit_of"
+              ],
+              "type": "string",
+              "format": "multi-line",
+              "default": {
+                "jqQuery": "if (.form.resubmit_of|type) == \"object\" then \"Resubmission of \" + .form.resubmit_of.identifier + \". It was rejected because: \" + (.form.resubmit_of.properties.decision_reason // \"no reason given\") + \". What I changed: \" else null end"
+              }
+            },
+            "module": {
+              "title": "Module (optional)",
+              "description": "Pick a Terraform module if you already know which one you want. Leave empty to let the planner choose.",
+              "dependsOn": [
+                "resubmit_of"
+              ],
+              "type": "string",
+              "format": "entity",
+              "blueprint": "terraform_module",
+              "default": {
+                "jqQuery": "if (.form.resubmit_of|type) == \"object\" then .form.resubmit_of.relations.terraform_module else null end"
+              }
+            },
+            "service": {
+              "title": "Service",
+              "description": "The service that will own and use the resource (identifier of a service entity in the catalog).",
+              "dependsOn": [
+                "resubmit_of"
+              ],
+              "type": "string",
+              "format": "entity",
+              "blueprint": "service",
+              "default": {
+                "jqQuery": "if (.form.resubmit_of|type) == \"object\" then .form.resubmit_of.relations.service else null end"
+              }
+            },
+            "environment": {
+              "title": "Environment",
+              "description": "Target environment entity: staging, test or production. Production and confidential data always need human approval.",
+              "dependsOn": [
+                "resubmit_of"
+              ],
+              "type": "string",
+              "format": "entity",
+              "blueprint": "environment",
+              "default": {
+                "jqQuery": "if (.form.resubmit_of|type) == \"object\" then .form.resubmit_of.relations.environment else null end"
+              }
+            },
+            "resubmit_of": {
+              "title": "Resubmit of (optional)",
+              "description": "Pick one of your rejected requests to start from its answers (or run this from the request's \u26a1 actions). Change what the rejection reason asks for, then submit.",
+              "type": "string",
+              "format": "entity",
+              "blueprint": "infra_request",
+              "dataset": {
+                "combinator": "and",
+                "rules": [
+                  {
+                    "value": "rejected",
+                    "operator": "=",
+                    "property": "status"
+                  }
+                ]
+              }
+            },
+            "request_text": {
+              "title": "What do you need?",
+              "description": "Describe in plain language the infrastructure you need and what it is for, e.g. 'A small Postgres database for order history' or 'A queue for payment events'. Include any sizes, counts or names you already know. Port AI: pass the user's own words here.",
+              "dependsOn": [
+                "resubmit_of"
+              ],
+              "type": "string",
+              "format": "multi-line",
+              "default": {
+                "jqQuery": "if (.form.resubmit_of|type) == \"object\" then .form.resubmit_of.properties.request_text else null end"
+              }
+            },
+            "data_sensitivity": {
+              "title": "Data sensitivity",
+              "description": "Sensitivity of the data the resource will hold: public, internal or confidential. If unsure, use internal; customer or financial data is confidential.",
+              "dependsOn": [
+                "resubmit_of"
+              ],
+              "type": "string",
+              "default": {
+                "jqQuery": "if (.form.resubmit_of|type) == \"object\" then .form.resubmit_of.properties.data_sensitivity else null end"
+              },
+              "enum": [
+                "public",
+                "internal",
+                "confidential"
+              ],
+              "enumColors": {
+                "public": "green",
+                "internal": "yellow",
+                "confidential": "red"
+              }
+            }
+          },
+          "required": [
+            "request_text",
+            "service",
+            "environment",
+            "data_sensitivity"
+          ],
+          "order": [
+            "resubmit_of",
+            "request_text",
+            "service",
+            "environment",
+            "data_sensitivity",
+            "module",
+            "notes"
+          ]
+        },
+        "actionCardButtonText": "Request",
+        "executeActionButtonText": "Submit",
+        "published": true,
+        "permissions": {
+          "roles": [
+            "Admin",
+            "Member"
+          ]
+        },
+        "contexts": [
+          {
+            "on": "SELF_SERVICE_HUB",
+            "visible": true
+          },
+          {
+            "on": "ENTITY",
+            "userInput": "module"
+          },
+          {
+            "on": "ENTITY",
+            "userInput": "resubmit_of"
+          }
+        ]
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "log_request",
+      "title": "Log Request",
+      "icon": "NewPage",
+      "description": "Stores the request as an infra_request entity (id ir-<run id>).",
+      "config": {
+        "type": "UPSERT_ENTITY",
+        "blueprintIdentifier": "infra_request",
+        "mapping": {
+          "identifier": "ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}",
+          "title": "{{ .outputs.trigger.request_text | .[0:80] }}",
+          "properties": {
+            "status": "planned",
+            "requester": "{{ .workflowRun.trigger.by.email }}",
+            "policy_check": "not_run",
+            "request_text": "{{ .outputs.trigger.request_text }}",
+            "data_sensitivity": "{{ .outputs.trigger.data_sensitivity }}"
+          },
+          "relations": {
+            "service": "{{ (.outputs.trigger.service | if type == \"object\" then .identifier else . end) }}",
+            "environment": "{{ (.outputs.trigger.environment | if type == \"object\" then .identifier else . end) }}"
+          }
+        },
+        "onFailure": "terminate",
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "draft_plan",
+      "title": "Draft Tech Plan",
+      "icon": "AI",
+      "description": null,
+      "config": {
+        "type": "AI_AGENT",
+        "userPrompt": "Draft a Terraform tech plan for this infra request. First load the skill 'terraform-tech-plan' with load_skill and follow it exactly.\n\nInfra request id: ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}\nRequest: {{ .outputs.trigger.request_text }}\nService: {{ (.outputs.trigger.service | if type == \"object\" then .identifier else . end) }}\nEnvironment: {{ (.outputs.trigger.environment | if type == \"object\" then .identifier else . end) }}\nData sensitivity: {{ .outputs.trigger.data_sensitivity }}\nRequested module: {{ (.outputs.trigger.module | if type == \"object\" then .identifier else . end) // \"none (choose the best fit)\" }}\nNotes: {{ .outputs.trigger.notes // \"none\" }}\n\nIf a requested module is given, use exactly that module (do not switch to another one); if it is a poor fit, say so under Concerns. Keep every value the requester asked for exactly as asked, even if unsafe, and list conflicts under Concerns.\n\nReturn: module = the chosen terraform_module identifier exactly as in the catalog (or \"none\"), tech_plan = the full markdown plan (including its Assumptions section), inputs = a JSON object string of input name to value.",
+        "agentIdentifier": "infra_planner",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "inputs": {
+              "type": "string",
+              "description": "JSON object string: input name -> value"
+            },
+            "module": {
+              "type": "string",
+              "description": "terraform_module identifier from the catalog, or none"
+            },
+            "tech_plan": {
+              "type": "string",
+              "description": "Full markdown tech plan"
+            }
+          },
+          "required": [
+            "module",
+            "tech_plan",
+            "inputs"
+          ]
+        },
+        "timeoutMinutes": 1440
+      },
+      "variables": {
+        "inputs": "{{ .result.response | fromjson | .inputs }}",
+        "module": "{{ .result.response | fromjson | .module }}",
+        "tech_plan": "{{ .result.response | fromjson | .tech_plan }}"
+      },
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "check_guardrails",
+      "title": "Check Guardrails",
+      "icon": "Lock",
+      "description": null,
+      "config": {
+        "type": "AI_AGENT",
+        "userPrompt": "Independently check this Terraform tech plan. First load the skill 'infra-guardrails' with load_skill and follow it exactly. You did not write this plan; do not trust it - read the module from the catalog yourself.\n\nInfra request id: ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}\nModule: {{ .outputs.draft_plan.module }}\nEnvironment: {{ (.outputs.trigger.environment | if type == \"object\" then .identifier else . end) }}\nData sensitivity: {{ .outputs.trigger.data_sensitivity }}\nPlan inputs (JSON): {{ .outputs.draft_plan.inputs }}\n\nTech plan:\n{{ .outputs.draft_plan.tech_plan }}\n\nReturn result = pass or fail, details = the rule-by-rule markdown list.",
+        "agentIdentifier": "guardrails_checker",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "result": {
+              "enum": [
+                "pass",
+                "fail"
+              ],
+              "type": "string"
+            },
+            "details": {
+              "type": "string",
+              "description": "Markdown list of each rule with \u2705/\u274c and a one-line reason"
+            }
+          },
+          "required": [
+            "result",
+            "details"
+          ]
+        },
+        "timeoutMinutes": 1440
+      },
+      "variables": {
+        "result": "{{ .result.response | fromjson | .result }}",
+        "details": "{{ .result.response | fromjson | .details }}"
+      },
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "save_plan",
+      "title": "Save Plan",
+      "icon": "Save",
+      "description": null,
+      "config": {
+        "type": "UPSERT_ENTITY",
+        "blueprintIdentifier": "infra_request",
+        "mapping": {
+          "identifier": "ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}",
+          "properties": {
+            "status": "awaiting_approval",
+            "tech_plan": "{{ .outputs.draft_plan.tech_plan }}",
+            "policy_check": "{{ .outputs.check_guardrails.result }}",
+            "approval_reason": "{{ [ (if (.outputs.trigger.environment | if type == \"object\" then .identifier else . end) == \"production\" then \"production\" else empty end), (if .outputs.trigger.data_sensitivity == \"confidential\" then \"confidential data\" else empty end), (if .outputs.check_guardrails.result != \"pass\" then \"guardrail exception\" else empty end) ] }}",
+            "policy_check_details": "{{ .outputs.check_guardrails.details }}"
+          },
+          "relations": {
+            "terraform_module": "{{ .outputs.draft_plan.module | if . == \"none\" or . == \"\" then null else . end }}"
+          }
+        },
+        "onFailure": "terminate",
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "guardrails_ok",
+      "title": "Guardrails OK?",
+      "icon": "Branch",
+      "description": "Pass continues to approval routing; anything else (fail) goes to Module exists? (no module -> Platform Team Decision, otherwise Exception Approval).",
+      "config": {
+        "type": "CONDITION",
+        "outlets": [
+          {
+            "identifier": "pass",
+            "title": "Pass",
+            "expression": ".outputs.check_guardrails.result == \"pass\""
+          }
+        ],
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "fetch_module",
+      "title": "Fetch Module",
+      "icon": "Port",
+      "description": "Helper: reads the chosen module's requires_approval flag and owning_team from the catalog (Port API, no auth needed).",
+      "config": {
+        "type": "WEBHOOK",
+        "url": "https://api.port.io/v1/blueprints/terraform_module/entities/{{ .outputs.draft_plan.module }}",
+        "agent": false,
+        "synchronized": true,
+        "method": "GET",
+        "onTimeout": "fail",
+        "onFailure": "terminate"
+      },
+      "variables": {
+        "owning_team": "{{ .result.response.data.entity.relations.owning_team }}",
+        "module_title": "{{ .result.response.data.entity.title }}",
+        "requires_approval": "{{ .result.response.data.entity.properties.requires_approval }}"
+      },
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "needs_approval",
+      "title": "Needs Approval?",
+      "icon": "Branch",
+      "description": "Human approval if environment is production, data is confidential, or the module requires approval. Otherwise (fallback) auto-approve.",
+      "config": {
+        "type": "CONDITION",
+        "outlets": [
+          {
+            "identifier": "yes",
+            "title": "Yes",
+            "expression": "(.outputs.trigger.environment | if type == \"object\" then .identifier else . end) == \"production\" or .outputs.trigger.data_sensitivity == \"confidential\" or ((.outputs.fetch_module.requires_approval | tostring) == \"true\")"
+          }
+        ],
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "auto_approve",
+      "title": "Auto-Approve",
+      "icon": "Checklist",
+      "description": null,
+      "config": {
+        "type": "UPSERT_ENTITY",
+        "blueprintIdentifier": "infra_request",
+        "mapping": {
+          "identifier": "ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}",
+          "properties": {
+            "status": "approved",
+            "approver": "Port rules (auto)",
+            "approval_mode": "auto",
+            "approval_reason": "{{ [] }}",
+            "decision_reason": "Auto-approved: passed guardrails, no approval rule matched"
+          }
+        },
+        "onFailure": "terminate",
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "save_approval_reason",
+      "title": "Save Approval Reason",
+      "icon": "Save",
+      "description": "Helper: records why a person must approve (production / confidential data / module requires approval) before Owner Approval waits.",
+      "config": {
+        "type": "UPSERT_ENTITY",
+        "blueprintIdentifier": "infra_request",
+        "mapping": {
+          "identifier": "ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}",
+          "properties": {
+            "approval_reason": "{{ [ (if (.outputs.trigger.environment | if type == \"object\" then .identifier else . end) == \"production\" then \"production\" else empty end), (if .outputs.trigger.data_sensitivity == \"confidential\" then \"confidential data\" else empty end), (if (.outputs.fetch_module.requires_approval | tostring) == \"true\" then \"module requires approval\" else empty end) ] }}"
+          }
+        },
+        "onFailure": "terminate",
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "owner_approval",
+      "title": "Owner Approval",
+      "icon": "Approval",
+      "description": null,
+      "config": {
+        "type": "INPUT",
+        "description": "Approve or reject infra request ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }} ({{ .outputs.draft_plan.module }} for {{ (.outputs.trigger.service | if type == \"object\" then .identifier else . end) }} in {{ (.outputs.trigger.environment | if type == \"object\" then .identifier else . end) }}, data: {{ .outputs.trigger.data_sensitivity }}). Guardrails: {{ .outputs.check_guardrails.result }}. Requested by {{ .workflowRun.trigger.by.email }}.",
+        "userInputs": {
+          "properties": {
+            "reason": {
+              "title": "Reason",
+              "description": "Why you approve or reject this request.",
+              "type": "string",
+              "format": "multi-line"
+            },
+            "tech_plan": {
+              "title": "Tech plan",
+              "readOnly": true,
+              "type": "string",
+              "format": "markdown",
+              "default": "{{ .outputs.draft_plan.tech_plan }}"
+            },
+            "guardrails": {
+              "title": "Guardrail result",
+              "readOnly": true,
+              "type": "string",
+              "format": "markdown",
+              "default": "**{{ .outputs.check_guardrails.result }}**\n\n{{ .outputs.check_guardrails.details }}"
+            }
+          },
+          "required": [
+            "reason"
+          ],
+          "order": [
+            "tech_plan",
+            "guardrails",
+            "reason"
+          ],
+          "buttons": [
+            {
+              "identifier": "approve",
+              "label": "Approve",
+              "variant": "PRIMARY"
+            },
+            {
+              "identifier": "reject",
+              "label": "Reject",
+              "variant": "DANGER"
+            }
+          ]
+        },
+        "outlets": [
+          {
+            "evaluationMethod": "button",
+            "identifier": "approve",
+            "title": "Approve",
+            "numOfResponders": 1
+          },
+          {
+            "evaluationMethod": "button",
+            "identifier": "reject",
+            "title": "Reject",
+            "numOfResponders": 1
+          }
+        ],
+        "responders": {
+          "roles": [
+            "Admin"
+          ],
+          "usersQuery": {
+            "combinator": "and",
+            "rules": [
+              {
+                "property": "$team",
+                "operator": "containsAny",
+                "value": [
+                  "{{ .outputs.fetch_module.owning_team }}"
+                ]
+              }
+            ]
+          }
+        },
+        "timeoutMinutes": 10080
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "save_owner_approval",
+      "title": "Save Owner Approval",
+      "icon": "Save",
+      "description": "Helper: records the human approval (approver, reason) before opening the PR.",
+      "config": {
+        "type": "UPSERT_ENTITY",
+        "blueprintIdentifier": "infra_request",
+        "mapping": {
+          "identifier": "ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}",
+          "properties": {
+            "status": "approved",
+            "approver": "{{ .outputs.owner_approval.responses[0].submitterInfo.submittedBy }}",
+            "approval_mode": "human",
+            "decision_reason": "{{ .outputs.owner_approval.responses[0].inputs.reason }}"
+          }
+        },
+        "onFailure": "terminate",
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "reject_request_owner",
+      "title": "Reject Request (Owner)",
+      "icon": "Alert",
+      "description": null,
+      "config": {
+        "type": "UPSERT_ENTITY",
+        "blueprintIdentifier": "infra_request",
+        "mapping": {
+          "identifier": "ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}",
+          "properties": {
+            "status": "rejected",
+            "approver": "{{ .outputs.owner_approval.responses[0].submitterInfo.submittedBy }}",
+            "approval_mode": "human",
+            "decision_reason": "{{ .outputs.owner_approval.responses[0].inputs.reason }}"
+          }
+        },
+        "onFailure": "terminate",
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "module_exists",
+      "title": "Module exists?",
+      "icon": "Branch",
+      "description": "Guardrails failed. If the planner found no catalog module (module = none), the platform team decides; any other failure goes to Exception Approval unchanged.",
+      "config": {
+        "type": "CONDITION",
+        "outlets": [
+          {
+            "identifier": "no_module",
+            "title": "No module fits",
+            "expression": "(.outputs.draft_plan.module // \"\" | tostring | ascii_downcase) as $m | ($m == \"none\" or $m == \"\" or $m == \"null\")"
+          }
+        ],
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "platform_decision",
+      "title": "Platform Team Decision",
+      "icon": "Approval",
+      "description": "No catalog module fits this request. The platform team either builds it by hand or delegates a new reusable module + usage file to a coding agent.",
+      "config": {
+        "type": "INPUT",
+        "description": "NO MODULE FITS infra request ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }} ({{ (.outputs.trigger.service | if type == \"object\" then .identifier else . end) }} in {{ (.outputs.trigger.environment | if type == \"object\" then .identifier else . end) }}, data: {{ .outputs.trigger.data_sensitivity }}). The planner found no Terraform module in the catalog for this request, so no governed PR can be built from an existing module. Requested by {{ .workflowRun.trigger.by.email }}. Request: {{ .outputs.trigger.request_text }}. Choose: 'Do it manually (platform team)' = the platform team owns it and builds it by hand (no PR from this run). 'Delegate to a coding agent' = a Cursor agent writes a NEW reusable module plus the usage file for this request and opens a PR marked for platform review.",
+        "userInputs": {
+          "properties": {
+            "reason": {
+              "title": "Reason",
+              "description": "Why you chose this path (e.g. 'one-off, we will do it by hand' or 'reusable, let the agent draft a module'). Required.",
+              "type": "string",
+              "format": "multi-line"
+            },
+            "tech_plan": {
+              "title": "Tech plan",
+              "readOnly": true,
+              "type": "string",
+              "format": "markdown",
+              "default": "{{ .outputs.draft_plan.tech_plan }}"
+            },
+            "failed_rules": {
+              "title": "Failed rules",
+              "readOnly": true,
+              "type": "string",
+              "format": "markdown",
+              "default": "{{ (.outputs.check_guardrails.details | split(\"\\n\") | map(select(test(\"\u274c|To fix\"))) | join(\"\\n\")) as $f | if $f == \"\" then .outputs.check_guardrails.details else $f end }}"
+            }
+          },
+          "required": [
+            "reason"
+          ],
+          "order": [
+            "failed_rules",
+            "tech_plan",
+            "reason"
+          ],
+          "buttons": [
+            {
+              "identifier": "manual",
+              "label": "Do it manually (platform team)",
+              "variant": "SECONDARY"
+            },
+            {
+              "identifier": "delegate",
+              "label": "Delegate to a coding agent",
+              "variant": "PRIMARY"
+            }
+          ]
+        },
+        "outlets": [
+          {
+            "evaluationMethod": "button",
+            "identifier": "manual",
+            "title": "Do it manually (platform team)",
+            "numOfResponders": 1,
+            "workflowStatusLabel": {
+              "text": "Platform team is building it manually (no module fits)",
+              "variant": "success"
+            }
+          },
+          {
+            "evaluationMethod": "button",
+            "identifier": "delegate",
+            "title": "Delegate to a coding agent",
+            "numOfResponders": 1
+          }
+        ],
+        "responders": {
+          "roles": [
+            "Admin",
+            "Member"
+          ]
+        },
+        "timeoutMinutes": 10080
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "save_manual",
+      "title": "Hand to Platform Team",
+      "icon": "Save",
+      "description": "No module fits and the platform team chose to build it by hand: status manual_platform, approver and reason saved. The run ends here.",
+      "config": {
+        "type": "UPSERT_ENTITY",
+        "blueprintIdentifier": "infra_request",
+        "mapping": {
+          "identifier": "ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}",
+          "properties": {
+            "status": "manual_platform",
+            "approver": "{{ .outputs.platform_decision.responses[0].submitterInfo.submittedBy }}",
+            "decision_reason": "{{ .outputs.platform_decision.responses[0].inputs.reason }}"
+          }
+        },
+        "onFailure": "terminate",
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "start_module_pr",
+      "title": "Start Module PR",
+      "icon": "Save",
+      "description": "Delegated to a coding agent: records approver and reason, marks the request pr_opening and starts the 30-minute PR timer, like Start PR.",
+      "config": {
+        "type": "UPSERT_ENTITY",
+        "blueprintIdentifier": "infra_request",
+        "mapping": {
+          "identifier": "ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}",
+          "properties": {
+            "status": "pr_opening",
+            "approver": "{{ .outputs.platform_decision.responses[0].submitterInfo.submittedBy }}",
+            "pr_deadline": "{{ now + 1800 | todate }}",
+            "decision_reason": "{{ .outputs.platform_decision.responses[0].inputs.reason }}",
+            "pr_requested_at": "{{ now | todate }}"
+          }
+        },
+        "onFailure": "terminate",
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "build_module_pr",
+      "title": "Build New Module PR",
+      "icon": "Cursor",
+      "description": "Cursor agent writes a new reusable module plus the usage file for this request and opens a PR marked as needing platform review.",
+      "config": {
+        "type": "CURSOR_AGENT",
+        "apiKey": "{{ .secrets[\"CURSOR_API_KEY\"] }}",
+        "prompt": {
+          "text": "No Terraform module in the catalog fits Port infra request ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}. The platform team delegated it to you: write a NEW reusable module AND the usage file for this request in this repository (port-demo/portcon-terraform-workshop), and open ONE pull request against main that is clearly marked as needing platform review.\n\n## Request\n- Infra request id: ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}\n- Request: {{ .outputs.trigger.request_text }}\n- Requested by: {{ .workflowRun.trigger.by.email }}\n- Service: {{ (.outputs.trigger.service | if type == \"object\" then .identifier else . end) }}\n- Environment: {{ (.outputs.trigger.environment | if type == \"object\" then .identifier else . end) }}\n- Data sensitivity: {{ .outputs.trigger.data_sensitivity }}\n- Notes: {{ .outputs.trigger.notes // \"none\" }}\n- Delegated by: {{ .outputs.platform_decision.responses[0].submitterInfo.submittedBy }} - reason: {{ .outputs.platform_decision.responses[0].inputs.reason }}\n- Port Infra Request link: https://app.port.io/infra_requestEntity?identifier=ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}\n\n## What to do\n1. Study the repo first: list `modules/` and read at least two existing modules end to end (main.tf, variables.tf, outputs.tf, versions/providers if present, README.md), plus `envs/staging/example-s3.tf.example`, `.github/CODEOWNERS`, `.github/pull_request_template.md` and any CI workflow under `.github/workflows/`. Match their naming, file layout, variable style (descriptions, types, validation), tagging and README format exactly.\n2. Create ONE new module under `modules/<new-module>/`, named like the existing modules (short, lowercase, describes the resource, e.g. `kafka-topic`). Make it reusable (inputs for the things that vary, safe defaults, the same `tags` convention as the other modules) and include a README in the same format as the others. Use only the providers the repo already uses; if the resource needs a provider the repo does not have, add it inside the module's own required_providers the same way other modules declare theirs.\n3. Add EXACTLY ONE usage file: `envs/{{ (.outputs.trigger.environment | if type == \"object\" then .identifier else . end) }}/{{ (.outputs.trigger.service | if type == \"object\" then .identifier else . end) }}-<new-module>-ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}.tf`, following the example file's structure: a single `module` block named `{{ (.outputs.trigger.service | if type == \"object\" then .identifier else . end) }}_<new module with underscores>`, `source = \"../../modules/<new-module>\"`, inputs that satisfy this request, and the six tags (service, team, environment, data_sensitivity, infra_request_id = ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}, managed_by = \"port\"). For the `team` tag use the platform team name from `.github/CODEOWNERS` (the part after @port-demo/).\n4. If `.github/CODEOWNERS` has per-module lines, add one line for `modules/<new-module>/` owned by the platform team. Do not modify, rename or delete any other existing file.\n5. The code must pass `terraform fmt -check` and `terraform validate` the same way the repo's CI runs them.\n6. Branch: `infra/ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}`. One commit: `feat(module): <new-module> module + usage for {{ (.outputs.trigger.service | if type == \"object\" then .identifier else . end) }} ({{ (.outputs.trigger.environment | if type == \"object\" then .identifier else . end) }})`.\n7. PR title: `[new module][needs platform review] <new-module> for {{ (.outputs.trigger.service | if type == \"object\" then .identifier else . end) }} ({{ (.outputs.trigger.environment | if type == \"object\" then .identifier else . end) }})`. PR body: fill in the repo's PR template `.github/pull_request_template.md` section by section (replace the HTML comments with real content; keep the headings and the footer line). Right after the Summary add exactly: `> \ud83d\udee0\ufe0f NEW MODULE - needs platform team review. No catalog module fit this request; this PR was delegated to a coding agent by <delegated by> (reason: <reason>).` In the Guardrail Check section say the request failed guardrails only because no module existed, and list the rules below as-is. Open it as a normal, ready-for-review PR.\n\n## Draft tech plan from the planner (context; it found no module)\n{{ .outputs.draft_plan.tech_plan }}\n\n## Guardrail details\n{{ .outputs.check_guardrails.details }}\n"
+        },
+        "model": "composer-2.5",
+        "source": {
+          "repository": "https://github.com/port-demo/portcon-terraform-workshop",
+          "ref": "main"
+        },
+        "target": {
+          "autoCreatePr": true,
+          "branchName": "infra/ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}"
+        },
+        "timeoutMinutes": 4320
+      },
+      "variables": {
+        "pr_url": "{{ .result.target.prUrl }}",
+        "status": "{{ .result.status }}",
+        "summary": "{{ .result.summary }}"
+      },
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "save_module_pr_link",
+      "title": "Save Module PR Link",
+      "icon": "Link",
+      "description": "Saves the new-module PR link and marks the request pr_opened, like Save PR Link.",
+      "config": {
+        "type": "UPSERT_ENTITY",
+        "blueprintIdentifier": "infra_request",
+        "mapping": {
+          "identifier": "ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}",
+          "properties": {
+            "pr_url": "{{ .outputs.build_module_pr.pr_url }}",
+            "status": "pr_opened"
+          }
+        },
+        "onFailure": "terminate",
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "exception_approval",
+      "title": "Exception Approval",
+      "icon": "Approval",
+      "description": "Guardrail violation: a manager (any Port user) may approve it as an exception, with a reason, or reject it.",
+      "config": {
+        "type": "INPUT",
+        "description": "Guardrail EXCEPTION for infra request ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }} ({{ .outputs.draft_plan.module }} for {{ (.outputs.trigger.service | if type == \"object\" then .identifier else . end) }} in {{ (.outputs.trigger.environment | if type == \"object\" then .identifier else . end) }}, data: {{ .outputs.trigger.data_sensitivity }}). The plan FAILED guardrails. Approve only if you accept the risk; approving opens the PR as-is. Requested by {{ .workflowRun.trigger.by.email }}. If the module is none, reject: no PR can be built.",
+        "userInputs": {
+          "properties": {
+            "reason": {
+              "title": "Reason",
+              "description": "Why you approve this exception (or why you reject it). Required.",
+              "type": "string",
+              "format": "multi-line"
+            },
+            "tech_plan": {
+              "title": "Tech plan",
+              "readOnly": true,
+              "type": "string",
+              "format": "markdown",
+              "default": "{{ .outputs.draft_plan.tech_plan }}"
+            },
+            "failed_rules": {
+              "title": "Failed rules",
+              "readOnly": true,
+              "type": "string",
+              "format": "markdown",
+              "default": "{{ (.outputs.check_guardrails.details | split(\"\\n\") | map(select(test(\"\u274c|To fix\"))) | join(\"\\n\")) as $f | if $f == \"\" then .outputs.check_guardrails.details else $f end }}"
+            }
+          },
+          "required": [
+            "reason"
+          ],
+          "order": [
+            "failed_rules",
+            "tech_plan",
+            "reason"
+          ],
+          "buttons": [
+            {
+              "identifier": "approve",
+              "label": "Approve exception",
+              "variant": "PRIMARY"
+            },
+            {
+              "identifier": "reject",
+              "label": "Reject",
+              "variant": "DANGER"
+            }
+          ]
+        },
+        "outlets": [
+          {
+            "evaluationMethod": "button",
+            "identifier": "approve",
+            "title": "Approve exception",
+            "numOfResponders": 1
+          },
+          {
+            "evaluationMethod": "button",
+            "identifier": "reject",
+            "title": "Reject",
+            "numOfResponders": 1
+          }
+        ],
+        "responders": {
+          "roles": [
+            "Admin",
+            "Member"
+          ]
+        },
+        "timeoutMinutes": 10080
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "save_exception",
+      "title": "Save Exception",
+      "icon": "Save",
+      "description": "Records the guardrail exception (approver, reason) before opening the PR.",
+      "config": {
+        "type": "UPSERT_ENTITY",
+        "blueprintIdentifier": "infra_request",
+        "mapping": {
+          "identifier": "ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}",
+          "properties": {
+            "status": "approved",
+            "approver": "{{ .outputs.exception_approval.responses[0].submitterInfo.submittedBy }}",
+            "approval_mode": "exception",
+            "decision_reason": "{{ .outputs.exception_approval.responses[0].inputs.reason }}"
+          }
+        },
+        "onFailure": "terminate",
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "start_pr",
+      "title": "Start PR",
+      "icon": "Save",
+      "description": "Marks the request pr_opening just before the coding agent runs and starts a 30-minute PR timer (pr_deadline); if it expires while still pr_opening, the Mark stuck PR automation sets pr_failed.",
+      "config": {
+        "type": "UPSERT_ENTITY",
+        "blueprintIdentifier": "infra_request",
+        "mapping": {
+          "identifier": "ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}",
+          "properties": {
+            "status": "pr_opening",
+            "pr_deadline": "{{ now + 1800 | todate }}",
+            "pr_requested_at": "{{ now | todate }}"
+          }
+        },
+        "onFailure": "terminate",
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "open_pr",
+      "title": "Open Terraform PR",
+      "icon": "Cursor",
+      "description": null,
+      "config": {
+        "type": "CURSOR_AGENT",
+        "apiKey": "{{ .secrets[\"CURSOR_API_KEY\"] }}",
+        "prompt": {
+          "text": "Implement approved Port infra request ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }} in this repository (port-demo/portcon-terraform-workshop) and open ONE pull request against main.\n\n## Request\n- Infra request id: ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}\n- Request: {{ .outputs.trigger.request_text }}\n- Requested by: {{ .workflowRun.trigger.by.email }}\n- Service: {{ (.outputs.trigger.service | if type == \"object\" then .identifier else . end) }}\n- Environment: {{ (.outputs.trigger.environment | if type == \"object\" then .identifier else . end) }}\n- Data sensitivity: {{ .outputs.trigger.data_sensitivity }}\n- Module: {{ .outputs.draft_plan.module }} (source ../../modules/{{ .outputs.draft_plan.module }})\n- Module owning team (use as the `team` tag): {{ .outputs.fetch_module.owning_team // \"not looked up on this path: use the team that .github/CODEOWNERS lists for modules/<module>/ (the part after @port-demo/)\" }}\n- Approved inputs (JSON): {{ .outputs.draft_plan.inputs }}\n- Guardrails: {{ .outputs.check_guardrails.result }}\n- Approval: {{ if .outputs.exception_approval then \"Approved as guardrail exception: \" + (.outputs.exception_approval.responses[0].inputs.reason | tostring) + \" (by \" + (.outputs.exception_approval.responses[0].submitterInfo.submittedBy | tostring) + \")\" elif .outputs.owner_approval then \"Approved by \" + (.outputs.owner_approval.responses[0].submitterInfo.submittedBy | tostring) + \": \" + (.outputs.owner_approval.responses[0].inputs.reason | tostring) else \"Auto-approved by rules\" end }}\n- Approval mode: {{ if .outputs.exception_approval then \"exception\" elif .outputs.owner_approval then \"human\" else \"auto\" end }}\n- Port Infra Request link: https://app.port.io/infra_requestEntity?identifier=ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}\n\n## What to change (strict)\n1. Read `envs/staging/example-s3.tf.example` and the module's `modules/<module>/variables.tf` and `README.md` first.\n2. Add EXACTLY ONE new file: `envs/{{ (.outputs.trigger.environment | if type == \"object\" then .identifier else . end) }}/{{ (.outputs.trigger.service | if type == \"object\" then .identifier else . end) }}-{{ .outputs.draft_plan.module }}-ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}.tf`, following the example file's structure: a single `module` block named `<service>_<module with underscores>` (replace any other non-alphanumeric characters with underscores), `source = \"../../modules/<module>\"`, one line per approved input using exactly the approved values, and the six tags (service, team, environment, data_sensitivity, infra_request_id = ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}, managed_by = \"port\").\n3. Do NOT modify, rename or delete any existing file. Never touch anything under `modules/`, `.github/`, providers.tf, lock files or READMEs. Do not add inputs the module does not define.\n4. Branch: `infra/ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}`. One commit: `feat(infra): <module> for <service> (<environment>)`.\n5. PR title: `[infra] <module> for <service> (<environment>)`. PR body: fill in the repo's PR template `.github/pull_request_template.md` section by section (replace the HTML comments with real content; keep the headings and the footer line). Open it as a normal, ready-for-review PR. If the approval mode above is `exception`, the PR body MUST contain, near the top (right after the Summary), a line exactly in the form `> \u26a0\ufe0f Approved as guardrail exception: <reason> (by <approver>)` using the approval text above, and the Guardrail Check section must list the failed rules as-is. Use the approved inputs exactly as given even if they break a guardrail; do not make them safer.\n\n## Approved tech plan (for the PR body)\n{{ .outputs.draft_plan.tech_plan }}\n\n## Guardrail details (for the PR body)\n{{ .outputs.check_guardrails.details }}\n"
+        },
+        "model": "composer-2.5",
+        "source": {
+          "repository": "https://github.com/port-demo/portcon-terraform-workshop",
+          "ref": "main"
+        },
+        "target": {
+          "autoCreatePr": true,
+          "branchName": "infra/ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}"
+        },
+        "timeoutMinutes": 4320
+      },
+      "variables": {
+        "pr_url": "{{ .result.target.prUrl }}",
+        "status": "{{ .result.status }}",
+        "summary": "{{ .result.summary }}"
+      },
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "save_pr_link",
+      "title": "Save PR Link",
+      "icon": "Link",
+      "description": null,
+      "config": {
+        "type": "UPSERT_ENTITY",
+        "blueprintIdentifier": "infra_request",
+        "mapping": {
+          "identifier": "ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}",
+          "properties": {
+            "pr_url": "{{ .outputs.open_pr.pr_url }}",
+            "status": "pr_opened"
+          }
+        },
+        "onFailure": "terminate",
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    },
+    {
+      "identifier": "reject_request",
+      "title": "Reject Request",
+      "icon": "Alert",
+      "description": "Rejected at Exception Approval (guardrail violation not accepted). Saves approver and reason.",
+      "config": {
+        "type": "UPSERT_ENTITY",
+        "blueprintIdentifier": "infra_request",
+        "mapping": {
+          "identifier": "ir-{{ .workflowRun.identifier | gsub(\"wfr_\"; \"\") | ascii_downcase }}",
+          "properties": {
+            "status": "rejected",
+            "approver": "{{ .outputs.exception_approval.responses[0].submitterInfo.submittedBy }}",
+            "decision_reason": "{{ .outputs.exception_approval.responses[0].inputs.reason }}"
+          }
+        },
+        "onFailure": "terminate",
+        "timeoutMinutes": 60
+      },
+      "variables": {},
+      "links": [],
+      "testOutputs": null,
+      "verbose": true
+    }
+  ],
+  "connections": [
+    {
+      "description": null,
+      "sourceIdentifier": "trigger",
+      "targetIdentifier": "log_request"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "log_request",
+      "targetIdentifier": "draft_plan"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "draft_plan",
+      "targetIdentifier": "check_guardrails"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "check_guardrails",
+      "targetIdentifier": "save_plan"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "save_plan",
+      "targetIdentifier": "guardrails_ok"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "guardrails_ok",
+      "targetIdentifier": "fetch_module",
+      "sourceOutletIdentifier": "pass"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "fetch_module",
+      "targetIdentifier": "needs_approval"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "needs_approval",
+      "targetIdentifier": "auto_approve",
+      "fallback": true
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "owner_approval",
+      "targetIdentifier": "save_owner_approval",
+      "sourceOutletIdentifier": "approve"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "owner_approval",
+      "targetIdentifier": "reject_request_owner",
+      "sourceOutletIdentifier": "reject"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "save_owner_approval",
+      "targetIdentifier": "start_pr"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "auto_approve",
+      "targetIdentifier": "start_pr"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "open_pr",
+      "targetIdentifier": "save_pr_link"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "start_pr",
+      "targetIdentifier": "open_pr"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "guardrails_ok",
+      "targetIdentifier": "module_exists",
+      "fallback": true
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "module_exists",
+      "targetIdentifier": "platform_decision",
+      "sourceOutletIdentifier": "no_module"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "module_exists",
+      "targetIdentifier": "exception_approval",
+      "fallback": true
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "exception_approval",
+      "targetIdentifier": "save_exception",
+      "sourceOutletIdentifier": "approve"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "exception_approval",
+      "targetIdentifier": "reject_request",
+      "sourceOutletIdentifier": "reject"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "save_exception",
+      "targetIdentifier": "start_pr"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "needs_approval",
+      "targetIdentifier": "save_approval_reason",
+      "sourceOutletIdentifier": "yes"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "save_approval_reason",
+      "targetIdentifier": "owner_approval"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "platform_decision",
+      "targetIdentifier": "save_manual",
+      "sourceOutletIdentifier": "manual"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "platform_decision",
+      "targetIdentifier": "start_module_pr",
+      "sourceOutletIdentifier": "delegate"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "start_module_pr",
+      "targetIdentifier": "build_module_pr"
+    },
+    {
+      "description": null,
+      "sourceIdentifier": "build_module_pr",
+      "targetIdentifier": "save_module_pr_link"
+    }
+  ]
+}
