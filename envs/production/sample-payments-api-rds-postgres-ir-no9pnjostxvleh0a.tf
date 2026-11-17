@@ -10,7 +10,7 @@ module "sample_payments_api_rds_postgres" {
   tags = {
     service          = "sample-payments-api"
     team             = "data_platform"
-    environment        = "production"
+    environment      = "production"
     data_sensitivity = "internal"
     infra_request_id = "ir-no9pnjostxvleh0a"
     managed_by       = "port"
